@@ -1,4 +1,4 @@
-// / src/components/TestCallModal.js
+// src/components/TestCallModal.js
 import React, { useState, useEffect, useRef } from 'react';
 import { startTestCall, processAudio, endCall, getAudioUrl } from '../services/api';
 import './TestCallModal.css'; // Import CSS for styling
@@ -35,6 +35,7 @@ function TestCallModal({ customer, onClose }) {
     const audioRef = useRef(null); // Ref for the audio playback element
     const mediaRecorderRef = useRef(null); // Ref for MediaRecorder
     const audioChunksRef = useRef([]); // To store audio chunks during recording
+    const audioObjectUrlsRef = useRef([]); // To track and clean up object URLs
 
     // --- Effects ---
     useEffect(() => {
@@ -49,31 +50,93 @@ function TestCallModal({ customer, onClose }) {
         }
     }, [greetingAudioUrl, callState]);
 
+    // Cleanup object URLs when unmounting
     useEffect(() => {
-        // Clean up object URL when component unmounts or responseAudioUrl changes
         return () => {
-            if (responseAudioUrl && responseAudioUrl.startsWith('blob:')) {
-                URL.revokeObjectURL(responseAudioUrl);
-            }
+            // Clean up all created object URLs
+            audioObjectUrlsRef.current.forEach(url => {
+                if (url && url.startsWith('blob:')) {
+                    URL.revokeObjectURL(url);
+                }
+            });
         };
-    }, [responseAudioUrl]);
+    }, []);
 
     // --- Audio Handling ---
-    const playAudio = (url, onEndedCallback) => {
-        if (audioRef.current) {
-            audioRef.current.src = url;
-            audioRef.current.play().catch(e => {
-                console.error("Audio play failed:", e);
-                setError("Failed to play audio. Please ensure browser allows autoplay.");
-                setCallState(CALL_STATE.ERROR); // Or back to WAITING_INPUT
-            });
-            // Remove previous listener before adding a new one
-            const currentAudio = audioRef.current;
-            const handleEnded = () => {
-                if(onEndedCallback) onEndedCallback();
-                currentAudio.removeEventListener('ended', handleEnded);
+    const playAudio = async (url, onEndedCallback) => {
+        try {
+            console.log("Attempting to play audio from URL:", url);
+            
+            // Check if we're dealing with a blob URL already
+            if (url.startsWith('blob:')) {
+                if (audioRef.current) {
+                    audioRef.current.src = url;
+                    
+                    const currentAudio = audioRef.current;
+                    const handleEnded = () => {
+                        if(onEndedCallback) onEndedCallback();
+                        currentAudio.removeEventListener('ended', handleEnded);
+                    };
+                    
+                    currentAudio.addEventListener('ended', handleEnded);
+                    await currentAudio.play();
+                }
+                return;
             }
-            currentAudio.addEventListener('ended', handleEnded);
+            
+            // If it's not a blob URL, fetch it first to check content type
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch audio: ${response.status} ${response.statusText}`);
+            }
+            
+            const contentType = response.headers.get('content-type');
+            console.log("Audio response content type:", contentType);
+            
+            // Create appropriate audio type - even if content type is wrong
+            // We'll try to play it anyway since it might be mislabeled
+            const validAudioType = contentType?.startsWith('audio/') 
+                ? contentType 
+                : 'audio/mpeg'; // Default to a common audio format
+            
+            const blob = await response.blob();
+            const audioBlob = new Blob([blob], { type: validAudioType });
+            const audioObjectUrl = URL.createObjectURL(audioBlob);
+            
+            // Track this URL for cleanup
+            audioObjectUrlsRef.current.push(audioObjectUrl);
+            
+            if (audioRef.current) {
+                audioRef.current.src = audioObjectUrl;
+                
+                // Set up event listeners
+                const currentAudio = audioRef.current;
+                const handleEnded = () => {
+                    if(onEndedCallback) onEndedCallback();
+                    currentAudio.removeEventListener('ended', handleEnded);
+                };
+                
+                const handleError = (e) => {
+                    console.error("Audio element error:", e);
+                    setError(`Failed to play audio: The audio format is not supported or file is corrupted.`);
+                    setCallState(CALL_STATE.ERROR);
+                    currentAudio.removeEventListener('error', handleError);
+                };
+                
+                currentAudio.addEventListener('ended', handleEnded);
+                currentAudio.addEventListener('error', handleError);
+                
+                try {
+                    await currentAudio.play();
+                } catch (e) {
+                    console.error("Audio play failed:", e);
+                    throw new Error(`Browser couldn't play the audio: ${e.message}`);
+                }
+            }
+        } catch (e) {
+            console.error("Audio play failed:", e);
+            setError(`Failed to play audio: ${e.message || "Unknown error"}`);
+            setCallState(CALL_STATE.ERROR);
         }
     };
 
@@ -132,11 +195,18 @@ function TestCallModal({ customer, onClose }) {
         setTranscript([]); // Reset transcript
         try {
             const result = await startTestCall(customer.id);
+            console.log("Start test call result:", result);
+            
             setCallSid(result.callSid);
             setGreetingText(result.greeting);
-            setGreetingAudioUrl(getAudioUrl(result.callSid)); // Construct URL
+            
+            // Use the audio URL from the API response if available, otherwise construct it
+            const greetingUrl = result.greetingAudioUrl || getAudioUrl(result.callSid);
+            console.log("Using greeting audio URL:", greetingUrl);
+            setGreetingAudioUrl(greetingUrl);
+            
             setTranscript(prev => [...prev, { speaker: 'AI', text: result.greeting }]);
-            setCallState(CALL_STATE.GREETING_READY); // State change to indicate greeting is ready
+            setCallState(CALL_STATE.GREETING_READY);
         } catch (err) {
             setError(err.message || 'Failed to start test call.');
             setCallState(CALL_STATE.ERROR);
@@ -163,34 +233,35 @@ function TestCallModal({ customer, onClose }) {
             setResponseText(result.response);
             setIsResolved(result.isResolved);
 
-            // Construct the full audio URL (adjust if needed based on your backend)
-            const fullAudioUrl = result.audioUrl;
+            // Ensure we have a valid URL - either directly from the API or construct it
+            let audioUrl = `http://localhost:5001/${result.audioUrl}`;
 
-            // Fetch the audio data
-            const audioResponse = await fetch(fullAudioUrl);
-            if (!audioResponse.ok) {
-                console.error("Failed to fetch audio data:", audioResponse.status, audioResponse.statusText);
-                setError("Failed to fetch audio data.");
-                setCallState(CALL_STATE.ERROR);
-                return;
+            if (!audioUrl) {
+                // Fallback to constructed URL if API doesn't provide one
+                audioUrl = getAudioUrl(callSid, '_response'); // Adding suffix to differentiate
+                console.log("Constructed response audio URL:", audioUrl);
+            } else {
+                console.log("Using API-provided audio URL:", audioUrl);
             }
-            const audioBlob = await audioResponse.blob();
-            const audioObjectUrl = URL.createObjectURL(audioBlob);
-            setResponseAudioUrl(audioObjectUrl); // Set the object URL for immediate playback
 
-            // Update transcript
+            // Update transcript before playing audio
             setTranscript(prev => [
                 ...prev,
                 { speaker: 'User', text: result.transcript },
                 { speaker: 'AI', text: result.response }
             ]);
 
-            setCallState(CALL_STATE.WAITING_INPUT); // Go back to waiting for more input
-            // Play the response immediately after fetching
-            playAudio(audioObjectUrl, () => {
+            // Play the audio and handle state transition
+            try {
+                setCallState(CALL_STATE.PLAYING_RESPONSE);
+                await playAudio(audioUrl, () => {
+                    setCallState(CALL_STATE.WAITING_INPUT);
+                });
+            } catch (audioErr) {
+                console.error("Failed to play response audio:", audioErr);
+                // Even if audio fails, we've already updated the transcript, so go to waiting input
                 setCallState(CALL_STATE.WAITING_INPUT);
-            });
-            setCallState(CALL_STATE.PLAYING_RESPONSE);
+            }
 
         } catch (err) {
             setError(err.message || 'Failed to process audio response.');
@@ -301,8 +372,10 @@ function TestCallModal({ customer, onClose }) {
                     <div>
                         <p className="error-message">Error: {error}</p>
                         <p>Please ensure your browser allows autoplay for this site.</p>
-                        <button onClick={onClose}>Close</button>
-                        <button onClick={handleStartCall}>Retry Call</button>
+                        <div className="error-action-buttons">
+                            <button onClick={onClose} className="close-button">Close</button>
+                            <button onClick={handleStartCall} className="retry-button">Retry Call</button>
+                        </div>
                     </div>
                 );
             default:
@@ -327,7 +400,7 @@ function TestCallModal({ customer, onClose }) {
                 {renderContent()}
 
                 {/* Hidden audio player */}
-                <audio ref={audioRef} style={{ display: 'none' }} />
+                <audio ref={audioRef} style={{ display: 'none' }} controls />
             </div>
         </div>
     );
