@@ -63,19 +63,19 @@ async function request(endpoint, options = {}) {
  * Fetches dashboard statistics.
  * @returns {Promise<object>}
  */
-export const getDashboardStats = () => request("/dashboard/stats");
+export const getDashboardStats = () => request("/calls/dashboard/stats");
 
 /**
  * Fetches a list of customers.
  * @returns {Promise<object>}
  */
-export const getCustomers = () => request("/customers");
+export const getCustomers = () => request("/customers/list");
 
 /**
  * Fetches a list of calls.
  * @returns {Promise<object>}
  */
-export const getCalls = () => request("/calls");
+export const getCalls = () => request("/calls/list");
 
 /**
  * Schedules a new call.
@@ -83,7 +83,7 @@ export const getCalls = () => request("/calls");
  * @returns {Promise<object>}
  */
 export const scheduleCall = (data) =>
-  request("/schedule-call", {
+  request("/calls/schedule-call", {
     method: "POST",
     body: data,
   });
@@ -94,7 +94,7 @@ export const scheduleCall = (data) =>
  * @returns {Promise<object>}
  */
 export const startTestCall = (customerId) =>
-  request("/start-test-call", {
+  request("/calls/start-test-call", {
     method: "POST",
     body: { customerId },
   });
@@ -129,7 +129,7 @@ export const simulateUserResponse = (callSid, userInput) =>
  */
 export const processAudio = async (formData) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/process-audio`, {
+    const response = await fetch(`${API_BASE_URL}/audio/process-audio`, {
       method: "POST",
       body: formData, // FormData automatically sets the correct Content-Type
     });
@@ -160,7 +160,7 @@ export const processAudio = async (formData) => {
  * @returns {Promise<object>}
  */
 export const endCall = (callSid, isResolved) =>
-  request("/end-call", {
+  request("/calls/end-call", {
     method: "POST",
     body: { callSid, isResolved },
   });
@@ -219,7 +219,7 @@ export const updateCallScripts = (data) =>
  * @returns {Promise<object>}
  */
 export const continueCall = (call_sid, user_input, is_audio) =>
-  request("/continue-call", {
+  request("/calls/continue-call", {
     method: "POST",
     body: {
       call_sid,
@@ -236,7 +236,7 @@ export const continueCall = (call_sid, user_input, is_audio) =>
  * @returns {Promise<object>}
  */
 export const getFeedback = (call_sid, user_input, is_audio) =>
-  request("/get-feedback", {
+  request("/calls/get-feedback", {
     method: "POST",
     body: {
       call_sid,
@@ -259,7 +259,7 @@ export const handleQuestions = (
   is_audio,
   conversation_state
 ) =>
-  request("/handle-questions", {
+  request("/calls/handle-questions", {
     method: "POST",
     body: {
       call_sid,
@@ -275,7 +275,7 @@ export const handleQuestions = (
  * @returns {Promise<Blob>} - Resolves to audio Blob (mp3).
  */
 export const textToSpeech = async (text) => {
-  const response = await fetch(`${API_BASE_URL}/text-to-speech`, {
+  const response = await fetch(`${API_BASE_URL}/audio/text-to-speech`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

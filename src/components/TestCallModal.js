@@ -171,6 +171,7 @@ function TestCallModal({ customer, onClose }) {
         nextQuestion = "اول سؤال , هل المشكلة اتحلت يا فندم؟";
         aiResp += nextQuestion;
         cs.step = "initial_question";
+        nextQuestion = null;
       }
     } else if (step === "handle_questions") {
       aiResp = "اول سؤال , هل المشكلة اتحلت يا فندم؟";
@@ -179,8 +180,17 @@ function TestCallModal({ customer, onClose }) {
       const response = await handleQuestions(callSid, userInput, false, cs); //call_sid, user_input, is_audio, conversation_state
       aiResp = response.ai_response;
       setIsResolved(response.resolved);
+      // {
+      //     "ai_response": "طب حضرتك خلصت الخطوات المطلوبة يا فندم؟",
+      //     "conversation_state": {
+      //         "step": "check_steps"
+      //     },
+      //     "feedback": null,
+      //     "resolved": false
+      // }
       cs = response.conversation_state;
     } else if (["get_feedback", "feedback_prompt"].includes(step)) {
+      //             return jsonify({"ai_response": "معلش, ممكن تقيم من واحد لخمسة؟", "feedback": None, "next_step": "feedback_prompt"})
 
       const { ai_response: resp, next_step } = await getFeedback(
         callSid,
